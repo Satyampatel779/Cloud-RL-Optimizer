@@ -26,31 +26,14 @@ except FileNotFoundError:
 env = CloudDataCenterEnv(max_steps=MAX_STEPS)
 
 
-
-def round_robin_action(step: int, **_) -> int:
-    return step % 3
-
-
-def least_loaded_action(obs: np.ndarray, **_) -> int:
-    cpu_loads = obs[:3]
-    return int(np.argmin(cpu_loads))
-
-
-
-def run_episode(strategy: str, seed: int):
+def run_episode(seed: int):
     obs, _ = env.reset(seed=seed)
-    total_reward  = 0.0
-    energy_log    = []
-    survived      = True
+    total_reward = 0.0
+    energy_log   = []
+    survived     = True
 
     for step in range(MAX_STEPS):
-        if strategy == "RL":
-            action, _ = model.predict(obs, deterministic=True)
-        elif strategy == "Round-Robin":
-            action = round_robin_action(step=step)
-        else:  # Least-Loaded
-            action = least_loaded_action(obs=obs)
-
+        action, _ = model.predict(obs, deterministic=True)
         obs, reward, terminated, truncated, info = env.step(int(action))
         total_reward += reward
         energy_log.append(info["energy_cost"])
@@ -62,82 +45,64 @@ def run_episode(strategy: str, seed: int):
             break
 
     return {
-        "survived":      survived,
-        "total_reward":  total_reward,
-        "energy_log":    energy_log,
-        "final_queue":   info["queue"],
-        "total_energy":  sum(energy_log),
+        "survived":     survived,
+        "total_reward": total_reward,
+        "energy_log":   energy_log,
+        "final_queue":  info["queue"],
+        "total_energy": sum(energy_log),
     }
 
 
+print(f"\nRunning {N_EPISODES} evaluation episodes …\n")
+episodes = [run_episode(seed=s) for s in range(N_EPISODES)]
 
-strategies = ["RL", "Round-Robin", "Least-Loaded"]
-results    = {s: [] for s in strategies}
+survival_rate = np.mean([e["survived"]     for e in episodes]) * 100
+mean_reward   = np.mean([e["total_reward"] for e in episodes])
+mean_energy   = np.mean([e["total_energy"] for e in episodes])
+mean_queue    = np.mean([e["final_queue"]  for e in episodes])
 
-print(f"\nRunning {N_EPISODES} evaluation episodes per strategy …\n")
-for seed in range(N_EPISODES):
-    for s in strategies:
-        results[s].append(run_episode(s, seed=seed))
-
-
-def stats(strategy):
-    eps = results[strategy]
-    return {
-        "survival_rate":  np.mean([e["survived"]     for e in eps]) * 100,
-        "mean_reward":    np.mean([e["total_reward"]  for e in eps]),
-        "mean_energy":    np.mean([e["total_energy"]  for e in eps]),
-        "mean_queue":     np.mean([e["final_queue"]   for e in eps]),
-    }
-
-summary = {s: stats(s) for s in strategies}
-
-col_w = 16
-header = f"{'Strategy':<{col_w}}{'Survival %':>12}{'Mean Reward':>14}{'Mean Energy':>14}{'Mean Queue':>12}"
-divider = "─" * len(header)
+col_w = 18
+header  = f"{'Metric':<{col_w}}{'Value':>14}"
+divider = "─" * (col_w + 14)
 print(divider)
 print(header)
 print(divider)
-for s in strategies:
-    st = summary[s]
-    print(
-        f"{s:<{col_w}}"
-        f"{st['survival_rate']:>11.1f}%"
-        f"{st['mean_reward']:>14.1f}"
-        f"{st['mean_energy']:>14.2f}"
-        f"{st['mean_queue']:>12.1f}"
-    )
+print(f"{'Survival Rate':<{col_w}}{survival_rate:>13.1f}%")
+print(f"{'Mean Reward':<{col_w}}{mean_reward:>14.1f}")
+print(f"{'Mean Total Energy':<{col_w}}{mean_energy:>14.2f}")
+print(f"{'Mean Final Queue':<{col_w}}{mean_queue:>14.1f}")
 print(divider)
 
-rl, rr = summary["RL"], summary["Round-Robin"]
-print(f"\nRL vs Round-Robin:")
-print(f"  Energy reduction : {(rr['mean_energy'] - rl['mean_energy']) / rr['mean_energy'] * 100:+.1f}%")
-print(f"  Reward gain      : {(rl['mean_reward']  - rr['mean_reward'])  / abs(rr['mean_reward']) * 100:+.1f}%")
-print(f"  Survival delta   : {rl['survival_rate'] - rr['survival_rate']:+.1f} pp")
 
-
-def mean_trace(strategy):
-    """Average per-step energy across all episodes (pad shorter epis with last value)."""
-    logs = [e["energy_log"] for e in results[strategy]]
+def mean_trace_with_std():
+    """Per-step mean ± std energy, padded to the same length."""
+    logs    = [e["energy_log"] for e in episodes]
     max_len = max(len(l) for l in logs)
-    padded  = [l + [l[-1]] * (max_len - len(l)) for l in logs]
-    return np.mean(padded, axis=0)
-
-traces = {s: mean_trace(s) for s in strategies}
+    padded  = np.array([l + [l[-1]] * (max_len - len(l)) for l in logs])
+    return padded.mean(axis=0), padded.std(axis=0)
 
 
-COLORS = {"RL": "#2196F3", "Round-Robin": "#F44336", "Least-Loaded": "#FF9800"}
+mean_e, std_e   = mean_trace_with_std()
+rewards_per_ep  = [e["total_reward"] for e in episodes]
+energies_per_ep = [e["total_energy"] for e in episodes]
+survived_count  = int(sum(e["survived"] for e in episodes))
+crashed_count   = N_EPISODES - survived_count
+
+RL_COLOR = "#2196F3"
+RL_FILL  = "#2196F344"
 
 fig = plt.figure(figsize=(16, 10), facecolor="#0f1117")
 fig.suptitle(
-    "Cloud Data Center RL Optimiser — Evaluation Report",
+    "Cloud Data Center RL Optimiser — PPO Agent Evaluation  (30 episodes)",
     fontsize=16, fontweight="bold", color="white", y=0.98,
 )
-gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.35)
+gs   = gridspec.GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.35)
 axes = [fig.add_subplot(gs[r, c]) for r in range(2) for c in range(2)]
+
 
 def style_ax(ax, title, xlabel, ylabel):
     ax.set_facecolor("#1a1d27")
-    ax.set_title(title,  color="white", fontsize=12, pad=8)
+    ax.set_title(title,  color="white",   fontsize=12, pad=8)
     ax.set_xlabel(xlabel, color="#aaaaaa", fontsize=9)
     ax.set_ylabel(ylabel, color="#aaaaaa", fontsize=9)
     ax.tick_params(colors="#aaaaaa")
@@ -145,50 +110,65 @@ def style_ax(ax, title, xlabel, ylabel):
         spine.set_color("#444444")
     ax.grid(True, color="#333333", linewidth=0.5, linestyle="--")
 
+
+# ── Panel 1: Energy cost over time ──────────────────────────────────────────
 ax = axes[0]
-for s in strategies:
-    ax.plot(traces[s], label=s, color=COLORS[s], linewidth=2,
-            linestyle="-" if s == "RL" else "--")
-style_ax(ax, "⚡ Energy Cost Over Time (avg across episodes)",
+x  = np.arange(len(mean_e))
+ax.plot(x, mean_e, color=RL_COLOR, linewidth=2, label="PPO Agent")
+ax.fill_between(x, mean_e - std_e, mean_e + std_e, color=RL_FILL)
+style_ax(ax, "⚡ Energy Cost Over Time (mean ± std)",
          "Time Step", "Energy Cost (lower = better)")
 ax.legend(facecolor="#252830", labelcolor="white", fontsize=9)
 
+# ── Panel 2: Survival pie / bar ──────────────────────────────────────────────
 ax = axes[1]
-rates  = [summary[s]["survival_rate"] for s in strategies]
-colors = [COLORS[s] for s in strategies]
-bars   = ax.bar(strategies, rates, color=colors, edgecolor="#555555", width=0.5)
-for bar, rate in zip(bars, rates):
-    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
-            f"{rate:.0f}%", ha="center", va="bottom", color="white", fontsize=11)
-style_ax(ax, "🛡️ Survival Rate (%)", "Strategy", "% Episodes Survived")
-ax.set_ylim(0, 115)
-
-ax = axes[2]
-rewards = [summary[s]["mean_reward"] for s in strategies]
-bars    = ax.bar(strategies, rewards, color=colors, edgecolor="#555555", width=0.5)
-for bar, val in zip(bars, rewards):
-    ypos = bar.get_height() + (5 if val >= 0 else -15)
-    ax.text(bar.get_x() + bar.get_width() / 2, ypos,
-            f"{val:.0f}", ha="center", va="bottom", color="white", fontsize=11)
-style_ax(ax, "🏆 Mean Cumulative Reward", "Strategy", "Reward (higher = better)")
-
-ax = axes[3]
-all_energies = [[e["total_energy"] for e in results[s]] for s in strategies]
-bp = ax.boxplot(
-    all_energies,
-    labels=strategies,
-    patch_artist=True,
-    medianprops=dict(color="white", linewidth=2),
-    boxprops=dict(linewidth=1.2),
-    whiskerprops=dict(color="#888888"),
-    capprops=dict(color="#888888"),
-    flierprops=dict(marker="o", markersize=4, color="#888888", alpha=0.5),
+wedge_colors = ["#4caf50", "#f44336"]
+wedges, texts, autotexts = ax.pie(
+    [survived_count, crashed_count],
+    labels=["Survived", "Crashed"],
+    colors=wedge_colors,
+    autopct="%1.0f%%",
+    startangle=90,
+    textprops={"color": "white", "fontsize": 11},
+    wedgeprops={"edgecolor": "#0f1117", "linewidth": 2},
 )
-for patch, color in zip(bp["boxes"], [COLORS[s] for s in strategies]):
-    patch.set_facecolor(color)
-    patch.set_alpha(0.7)
-style_ax(ax, "📦 Total Energy Distribution", "Strategy", "Total Energy Cost")
+for at in autotexts:
+    at.set_fontsize(13)
+    at.set_fontweight("bold")
+ax.set_facecolor("#1a1d27")
+ax.set_title("🛡️ Survival Rate  (30 episodes)", color="white", fontsize=12, pad=8)
 
-plt.savefig(RESULTS_IMG, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+# ── Panel 3: Reward distribution ─────────────────────────────────────────────
+ax = axes[2]
+ax.hist(rewards_per_ep, bins=12, color=RL_COLOR, edgecolor="#0f1117",
+        alpha=0.85, linewidth=0.8)
+ax.axvline(mean_reward, color="#ffeb3b", linewidth=1.8,
+           linestyle="--", label=f"Mean = {mean_reward:.0f}")
+style_ax(ax, "🏆 Cumulative Reward Distribution",
+         "Total Reward per Episode", "# Episodes")
+ax.legend(facecolor="#252830", labelcolor="white", fontsize=9)
+
+# ── Panel 4: Total energy distribution ───────────────────────────────────────
+ax = axes[3]
+bp = ax.boxplot(
+    energies_per_ep,
+    vert=True,
+    patch_artist=True,
+    widths=0.4,
+    medianprops=dict(color="white",    linewidth=2.5),
+    boxprops=dict(linewidth=1.2),
+    whiskerprops=dict(color="#888888", linewidth=1.2),
+    capprops=dict(color="#888888",     linewidth=1.2),
+    flierprops=dict(marker="o", markersize=5, color=RL_COLOR, alpha=0.6),
+)
+bp["boxes"][0].set_facecolor(RL_COLOR)
+bp["boxes"][0].set_alpha(0.75)
+ax.set_xticks([1])
+ax.set_xticklabels(["PPO Agent"], color="#aaaaaa", fontsize=10)
+style_ax(ax, "📦 Total Energy Cost Distribution",
+         "Strategy", "Total Energy Cost per Episode")
+
+plt.savefig(RESULTS_IMG, dpi=150, bbox_inches="tight",
+            facecolor=fig.get_facecolor())
 print(f"\n✔  Evaluation plot saved → {RESULTS_IMG}")
 plt.show()
