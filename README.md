@@ -124,39 +124,6 @@ Cloud-RL-Optimizer/
 
 ---
 
-## 🚀 Getting Started
-
-### 1. Clone & Install
-
-```bash
-git clone https://github.com/<your-username>/Cloud-RL-Optimizer.git
-cd Cloud-RL-Optimizer
-pip install -r requirements.txt
-```
-
-### 2. Train the Agent
-
-```bash
-python train.py
-# Monitor live training curves in a separate terminal:
-tensorboard --logdir tensorboard_logs
-```
-
-Training runs **300,000 timesteps** across **4 parallel environments** (~5–10 minutes on CPU).
-
-### 3. Evaluate & Benchmark
-
-```bash
-python evaluate.py
-```
-
-Runs 30 evaluation episodes, prints a performance summary table, and saves a 4-panel `results.png` (energy trace, survival pie, reward histogram, energy box plot).
-
-### 4. Launch the Live Dashboard
-
-```bash
-streamlit run app.py
-```
 
 Watch the trained PPO agent route tasks in real-time with animated CPU, RAM, and temperature gauges.
 
